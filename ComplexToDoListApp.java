@@ -326,7 +326,7 @@ public class ComplexToDoListApp extends JFrame {
     private long getUniqueId() {
         return System.currentTimeMillis() + Math.round(Math.random() * 1000);
     }
-
+    @SuppressWarnings("unchecked")
     private List<Task> loadTasksFromFile() {
         File file = new File(FILE_NAME);
         if (file.exists()) {
