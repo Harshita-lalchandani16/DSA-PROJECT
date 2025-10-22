@@ -16,29 +16,41 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 public class ComplexToDoListApp extends JFrame {
 
     private final DefaultListModel<Task> allTasksModel;
     private JList<Task> taskList;
-    private JTextArea taskField; // Changed to JTextArea for multi-line input
+    private JTextArea taskField;
     private JComboBox<String> prioritySet;
     private JTextField completionDateField;
     private JTextField taskKeyField;
     private JComboBox<String> statusSelect;
     private JComboBox<String> sort;
+    
+    // NEW FEATURE VARIABLES
+    private JTextField taskIdField; // Hidden field to track task being edited (0 = new task)
+    private JButton addButton; // Reference to change text/functionality
+    private JButton cancelButton; // New button to cancel edit
 
     // --- Custom Colors and Fonts ---
     private static final Color PRIMARY_COLOR = new Color(52, 73, 94); // Dark Blue/Grey
     private static final Color ACCENT_COLOR = new Color(46, 204, 113); // Emerald Green
     private static final Color ACCENT_HOVER = new Color(39, 174, 96); // Darker Green
+    private static final Color WARNING_COLOR = new Color(243, 156, 18); // Flat Orange
+    private static final Color WARNING_HOVER = new Color(230, 126, 34); // Darker Orange
     private static final Color BACKGROUND_COLOR = new Color(245, 245, 245); // Light Grey
     private static final Color ERROR_COLOR = new Color(231, 76, 60); // Flat Red
     private static final Font APP_FONT = new Font("Segoe UI", Font.PLAIN, 14);
     private static final Font TITLE_FONT = new Font("Segoe UI", Font.BOLD, 16);
     private static final Font LIST_FONT = new Font("Monospaced", Font.PLAIN, 13);
-
+    
+    // PRIORITY CUE COLORS (Used for the text background/cue box)
+    private static final Color HIGH_PRIORITY_CUE = new Color(231, 76, 60); // Red
+    private static final Color MEDIUM_PRIORITY_CUE = new Color(241, 196, 15); // Yellow
+    private static final Color LOW_PRIORITY_CUE = new Color(39, 174, 96); // Green
 
     private static final String FILE_NAME = "tasks_complex.ser";
 
@@ -90,7 +102,7 @@ public class ComplexToDoListApp extends JFrame {
         // Titled Border for Input Section
         Border titledBorder = BorderFactory.createTitledBorder(
             BorderFactory.createLineBorder(PRIMARY_COLOR, 1, true),
-            "NEW TASK ENTRY",
+            "NEW TASK ENTRY / EDIT TASK",
             TitledBorder.LEFT,
             TitledBorder.TOP,
             TITLE_FONT.deriveFont(Font.BOLD), PRIMARY_COLOR
@@ -101,7 +113,11 @@ public class ComplexToDoListApp extends JFrame {
         gbc.insets = new Insets(5, 10, 5, 10);
         gbc.fill = GridBagConstraints.HORIZONTAL;
 
-        // 1. Task Field (Now JTextArea)
+        // Hidden ID Field (for tracking state: 0 = new, >0 = editing existing)
+        taskIdField = new JTextField("0"); 
+        taskIdField.setVisible(false); 
+        
+        // 1. Task Field (JTextArea)
         taskField = new JTextArea(3, 30);
         taskField.setFont(APP_FONT);
         taskField.setLineWrap(true);
@@ -114,19 +130,20 @@ public class ComplexToDoListApp extends JFrame {
         
         gbc.gridx = 0;
         gbc.gridy = 0;
-        gbc.gridwidth = 3;
+        gbc.gridwidth = 4; // Span across the entire top row
         panel.add(taskLabel, gbc);
         
         gbc.gridy = 1;
         gbc.weightx = 1.0;
         gbc.weighty = 1.0;
         panel.add(taskScrollPane, gbc);
-        gbc.weighty = 0; // Reset weight
+        gbc.weighty = 0; 
+        gbc.gridwidth = 1; // Reset grid width for next row
 
-        // 2. Priority Selector
-        String[] priorities = { "Low (1)", "Medium (2)", "High (3)" };
+        // 2. Priority Selector (Updated labels)
+        String[] priorities = { "Low", "Medium", "High" };
         prioritySet = new JComboBox<>(priorities);
-        prioritySet.setSelectedIndex(2);
+        prioritySet.setSelectedIndex(2); // Default to High
         prioritySet.setFont(APP_FONT);
         prioritySet.setBackground(Color.WHITE);
         
@@ -135,40 +152,61 @@ public class ComplexToDoListApp extends JFrame {
         
         gbc.gridx = 0;
         gbc.gridy = 2;
-        gbc.gridwidth = 1;
-        gbc.weightx = 0.3;
+        gbc.weightx = 0.25;
         panel.add(priorityLabel, gbc);
         
         gbc.gridy = 3;
         panel.add(prioritySet, gbc);
 
-        // 3. Completion Date Input
+        // 3. Completion Date Input with Picker Button
+        JPanel datePanel = new JPanel(new BorderLayout(5, 0));
         completionDateField = new JTextField(LocalDate.now().plusDays(1).toString());
         completionDateField.setFont(APP_FONT);
         completionDateField.setBorder(BorderFactory.createCompoundBorder(
             completionDateField.getBorder(), 
-            BorderFactory.createEmptyBorder(5, 5, 5, 5) // Internal padding
+            BorderFactory.createEmptyBorder(5, 5, 5, 5)
         ));
+        
+        JButton datePickerButton = createStyledButton("...", Color.LIGHT_GRAY, Color.GRAY, Color.BLACK);
+        datePickerButton.setPreferredSize(new Dimension(30, completionDateField.getPreferredSize().height));
+        datePickerButton.addActionListener(this::showDatePickerDialog);
+        
+        datePanel.add(completionDateField, BorderLayout.CENTER);
+        datePanel.add(datePickerButton, BorderLayout.EAST);
         
         JLabel dateLabel = new JLabel("Due Date (YYYY-MM-DD):");
         dateLabel.setFont(APP_FONT.deriveFont(Font.BOLD));
         
         gbc.gridx = 1;
         gbc.gridy = 2;
-        gbc.weightx = 0.4;
+        gbc.weightx = 0.45;
         panel.add(dateLabel, gbc);
         
         gbc.gridy = 3;
-        panel.add(completionDateField, gbc);
+        panel.add(datePanel, gbc);
 
-        // 4. Add Button
-        JButton addButton = createStyledButton("Add Task", ACCENT_COLOR, ACCENT_HOVER, Color.WHITE);
+        // 4. Action Buttons (Add/Update and Cancel)
+        
+        // Add/Update Button
+        addButton = createStyledButton("Add Task", ACCENT_COLOR, ACCENT_HOVER, Color.WHITE);
         addButton.addActionListener(this::handleSubmit);
         
+        // Cancel Button (Only visible when editing)
+        cancelButton = createStyledButton("Cancel Edit", WARNING_COLOR, WARNING_HOVER, Color.WHITE);
+        cancelButton.addActionListener(this::handleCancelEdit);
+        cancelButton.setVisible(false);
+        
+        // Panel for holding Add/Update and Cancel
+        JPanel actionPanel = new JPanel(new GridLayout(1, 2, 5, 0));
+        actionPanel.setBackground(BACKGROUND_COLOR);
+        actionPanel.add(addButton);
+        actionPanel.add(cancelButton);
+
         gbc.gridx = 2;
         gbc.gridy = 3;
+        gbc.gridwidth = 2;
         gbc.weightx = 0.3;
-        panel.add(addButton, gbc);
+        panel.add(actionPanel, gbc);
 
         return panel;
     }
@@ -188,7 +226,7 @@ public class ComplexToDoListApp extends JFrame {
         panel.setBorder(new CompoundBorder(new EmptyBorder(0, 15, 15, 15), titledBorder));
 
 
-        // --- Top Controls (Search, Filter, Sort) ---
+        // --- Top Controls (Search, Filter, Sort, Edit Button) ---
         JPanel topControls = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 10));
         topControls.setBackground(BACKGROUND_COLOR);
 
@@ -197,7 +235,7 @@ public class ComplexToDoListApp extends JFrame {
         taskKeyField.setFont(APP_FONT);
         taskKeyField.setBorder(BorderFactory.createCompoundBorder(
             taskKeyField.getBorder(), 
-            BorderFactory.createEmptyBorder(5, 5, 5, 5) // Internal padding
+            BorderFactory.createEmptyBorder(5, 5, 5, 5)
         ));
         taskKeyField.getDocument().addDocumentListener(new SimpleDocumentListener() {
             @Override
@@ -236,9 +274,12 @@ public class ComplexToDoListApp extends JFrame {
         scrollPane.setBorder(BorderFactory.createLineBorder(PRIMARY_COLOR.brighter(), 1, true));
         panel.add(scrollPane, BorderLayout.CENTER);
 
-        // --- Bottom Buttons (Delete, Clear All) ---
+        // --- Bottom Buttons (Edit, Delete, Clear All) ---
         JPanel bottomButtons = new JPanel(new FlowLayout(FlowLayout.CENTER, 40, 10));
         bottomButtons.setBackground(BACKGROUND_COLOR);
+        
+        JButton editButton = createStyledButton("Edit Selected Task", WARNING_COLOR, WARNING_HOVER, Color.WHITE);
+        editButton.addActionListener(this::handleEdit);
         
         JButton removeButton = createStyledButton("Remove Selected", ERROR_COLOR, ERROR_COLOR.darker(), Color.WHITE);
         removeButton.addActionListener(this::handleDelete);
@@ -246,6 +287,7 @@ public class ComplexToDoListApp extends JFrame {
         JButton clearAllButton = createStyledButton("Clear All Tasks", new Color(127, 140, 141), new Color(149, 165, 166), Color.WHITE); // Grey Color
         clearAllButton.addActionListener(this::handleClearAll);
 
+        bottomButtons.add(editButton);
         bottomButtons.add(removeButton);
         bottomButtons.add(clearAllButton);
         panel.add(bottomButtons, BorderLayout.SOUTH);
@@ -297,8 +339,28 @@ public class ComplexToDoListApp extends JFrame {
         });
     }
 
+    private void showDatePickerDialog(ActionEvent evt) {
+        String current = completionDateField.getText();
+        String dateInput = (String) JOptionPane.showInputDialog(this, 
+                                                       "Enter Due Date (YYYY-MM-DD):\nExample: " + LocalDate.now().plusDays(7).toString(), 
+                                                       "Set Due Date", 
+                                                       JOptionPane.PLAIN_MESSAGE, 
+                                                       null, 
+                                                       null, 
+                                                       current);
+        
+        if (dateInput != null && !dateInput.trim().isEmpty()) {
+             try {
+                // Validate format before setting
+                LocalDate.parse(dateInput.trim(), DateTimeFormatter.ISO_LOCAL_DATE);
+                completionDateField.setText(dateInput.trim());
+            } catch (Exception e) {
+                JOptionPane.showMessageDialog(this, "Invalid Date Format. Please use YYYY-MM-DD.", "Date Error", JOptionPane.ERROR_MESSAGE);
+            }
+        }
+    }
+
     private void handleSubmit(ActionEvent evt) {
-        // Use getText() for JTextArea
         String taskValue = taskField.getText().trim(); 
         String dateString = completionDateField.getText().trim();
         LocalDate dueDate;
@@ -319,19 +381,44 @@ public class ComplexToDoListApp extends JFrame {
             return;
         }
 
-        // Create Task Object
         // Get priority index (0=Low, 1=Medium, 2=High). Add 1 to get priority level (1-3)
-        int priority = prioritySet.getSelectedIndex() + 1; 
-        Task taskObj = new Task(getUniqueId(), taskValue, priority, dueDate);
+        int priority = prioritySet.getSelectedIndex() + 1;
+        long currentTaskId = Long.parseLong(taskIdField.getText());
+
+        List<Task> tasks = getTasksFromLocalStorage();
+        
+        if (currentTaskId == 0) {
+            // --- ADD NEW TASK ---
+            Task taskObj = new Task(getUniqueId(), taskValue, priority, dueDate);
+            tasks.add(taskObj);
+            JOptionPane.showMessageDialog(this, "Task added successfully!", "Success", JOptionPane.INFORMATION_MESSAGE);
+        } else {
+            // --- UPDATE EXISTING TASK ---
+            Optional<Task> existingTask = tasks.stream()
+                .filter(t -> t.getId() == currentTaskId)
+                .findFirst();
+
+            if (existingTask.isPresent()) {
+                Task taskToUpdate = existingTask.get();
+                // Replace the old task with a new, updated instance (as Task is immutable except for completion status)
+                tasks.remove(taskToUpdate);
+                Task updatedTask = new Task(currentTaskId, taskValue, priority, dueDate);
+                updatedTask.setCompleted(taskToUpdate.isCompleted()); // Maintain current completion status
+                tasks.add(updatedTask);
+                JOptionPane.showMessageDialog(this, "Task updated successfully!", "Success", JOptionPane.INFORMATION_MESSAGE);
+                handleCancelEdit(null); // Clear the edit state after successful update
+            } else {
+                 JOptionPane.showMessageDialog(this, "Error: Task ID not found for update.", "Update Error", JOptionPane.ERROR_MESSAGE);
+            }
+        }
 
         // Update persistence (file)
-        List<Task> tasks = getTasksFromLocalStorage();
-        tasks.add(taskObj);
         setTasksToLocalStorage(tasks);
 
         // Update UI
         taskField.setText("");
         completionDateField.setText(LocalDate.now().plusDays(1).toString()); // Reset due date
+        prioritySet.setSelectedIndex(2); // Reset to High Priority
         applyFilterAndSort();
     }
 
@@ -351,7 +438,50 @@ public class ComplexToDoListApp extends JFrame {
         if (confirm == JOptionPane.YES_OPTION) {
             removeTaskFromLocalStorage(selectedTask.getId());
             applyFilterAndSort();
+            handleCancelEdit(null); // Clear editing state if the task being edited was deleted
         }
+    }
+    
+    // NEW FEATURE HANDLERS
+    private void handleEdit(ActionEvent evt) {
+        Task selectedTask = taskList.getSelectedValue();
+        if (selectedTask == null) {
+            JOptionPane.showMessageDialog(this, "Please select a task to edit.", "No Selection",
+                    JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+
+        // 1. Populate Input Fields
+        taskIdField.setText(String.valueOf(selectedTask.getId()));
+        taskField.setText(selectedTask.getValue());
+        // Priority is 1-based, ComboBox index is 0-based
+        prioritySet.setSelectedIndex(selectedTask.getPriority() - 1); 
+        completionDateField.setText(selectedTask.getCompletionDate().toString());
+
+        // 2. Change Button/UI State
+        addButton.setText("Update Task");
+        addButton.setBackground(WARNING_COLOR);
+        addButton.setToolTipText("Click to save changes to the selected task.");
+        cancelButton.setVisible(true);
+        
+        // Scroll back to the input panel
+        taskField.requestFocusInWindow();
+    }
+
+    private void handleCancelEdit(ActionEvent evt) {
+        // 1. Reset Internal State
+        taskIdField.setText("0");
+
+        // 2. Reset Input Fields
+        taskField.setText("");
+        completionDateField.setText(LocalDate.now().plusDays(1).toString());
+        prioritySet.setSelectedIndex(2);
+        
+        // 3. Reset Button/UI State
+        addButton.setText("Add Task");
+        addButton.setBackground(ACCENT_COLOR);
+        addButton.setToolTipText("Click to add a new task.");
+        cancelButton.setVisible(false);
     }
 
     private void handleMarkAsCompleted() {
@@ -360,14 +490,15 @@ public class ComplexToDoListApp extends JFrame {
             return;
 
         // Toggle completion status
-        selectedTask.setCompleted(!selectedTask.isCompleted());
+        boolean newStatus = !selectedTask.isCompleted();
+        selectedTask.setCompleted(newStatus);
 
         // Update persistence
         List<Task> tasks = getTasksFromLocalStorage();
         tasks.stream()
                 .filter(t -> t.getId() == selectedTask.getId())
                 .findFirst()
-                .ifPresent(t -> t.setCompleted(selectedTask.isCompleted()));
+                .ifPresent(t -> t.setCompleted(newStatus));
         setTasksToLocalStorage(tasks);
 
         // Update UI
@@ -388,6 +519,7 @@ public class ComplexToDoListApp extends JFrame {
             // Update UI by clearing the model and reapplying filter/sort logic
             allTasksModel.clear(); 
             applyFilterAndSort();
+            handleCancelEdit(null); // Reset edit state
         }
     }
 
@@ -456,7 +588,12 @@ public class ComplexToDoListApp extends JFrame {
     // =================================================================
 
     private long getUniqueId() {
-        return System.currentTimeMillis() + Math.round(Math.random() * 1000);
+        // Ensure ID is greater than any existing ID for uniqueness upon creation
+        long maxId = getTasksFromLocalStorage().stream()
+                .mapToLong(Task::getId)
+                .max()
+                .orElse(0L);
+        return Math.max(maxId + 1, System.currentTimeMillis() + Math.round(Math.random() * 1000));
     }
     
     // Suppress the unchecked cast warning related to file deserialization
@@ -477,7 +614,6 @@ public class ComplexToDoListApp extends JFrame {
     }
 
     private List<Task> getTasksFromLocalStorage() {
-        // Reads from the file every time to ensure consistency, though typically a cache is faster
         return loadTasksFromFile(); 
     }
 
@@ -501,43 +637,123 @@ public class ComplexToDoListApp extends JFrame {
     // CUSTOM RENDERER (Visually Enhanced)
     // =================================================================
 
-    private static class TaskCellRenderer extends DefaultListCellRenderer {
-        private static final Border PADDING_BORDER = BorderFactory.createEmptyBorder(8, 10, 8, 10);
+    private class TaskCellRenderer extends DefaultListCellRenderer {
+        // Reduced padding for a tighter, cleaner look
+        private static final Border PADDING_BORDER = BorderFactory.createEmptyBorder(6, 10, 6, 10);
         
+        /**
+         * Returns a JPanel containing two JLabels: one for priority cue and one for task details.
+         * This uses a JPanel to handle complex layout/coloring better than a single JLabel with HTML.
+         */
         @Override
         public Component getListCellRendererComponent(JList<?> list, Object value, int index,
                 boolean isSelected, boolean cellHasFocus) {
             
-            // Call superclass method to handle default selection coloring
-            JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
-            label.setBorder(PADDING_BORDER);
-            label.setFont(LIST_FONT);
-
-            if (value instanceof Task) {
-                Task task = (Task) value;
-
-                // 1. Background Color based on urgency/completion (Only when not selected)
-                if (!isSelected) {
-                    Color bgColor = getColorForTask(task);
-                    label.setBackground(bgColor);
-                } else {
-                    // Use a slightly darker color for selected item background
-                    label.setBackground(PRIMARY_COLOR.darker());
-                    label.setForeground(Color.WHITE);
-                }
-
-                // 2. Text Formatting (Strikethrough)
-                if (task.isCompleted()) {
-                    // Use a muted text color for completed tasks
-                    label.setForeground(isSelected ? Color.LIGHT_GRAY : new Color(150, 150, 150)); 
-                    label.setText("<html><strike>" + task.toString() + "</strike></html>");
-                } else {
-                    // Use black or white text for incomplete tasks
-                    label.setForeground(isSelected ? Color.WHITE : Color.BLACK);
-                    label.setText(task.toString());
-                }
+            if (!(value instanceof Task)) {
+                return super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
             }
-            return label;
+            
+            Task task = (Task) value;
+            
+            // --- 1. Determine Colors ---
+            
+            // Background color based on urgency/completion
+            Color bgColor = getColorForTask(task);
+            
+            // Main text color (usually black, but white if selected)
+            Color mainFgColor = isSelected ? Color.WHITE : Color.BLACK;
+
+            // --- 2. Create Panel Container (to hold priority and main text) ---
+            
+            // Use a simple FlowLayout or BorderLayout for structure
+            JPanel panel = new JPanel(new BorderLayout(15, 0)); // 15px gap between elements
+            panel.setBackground(bgColor);
+            panel.setBorder(PADDING_BORDER);
+
+            // --- 3. Create Priority Cue Label ---
+            
+            String priorityLabelText;
+            Color priorityCueColor;
+            Color priorityFgColor;
+
+            switch (task.getPriority()) {
+                case 3: 
+                    priorityCueColor = HIGH_PRIORITY_CUE; 
+                    priorityFgColor = Color.WHITE; // White text on dark red cue
+                    priorityLabelText = "HIGH";
+                    break;
+                case 2:
+                    priorityCueColor = MEDIUM_PRIORITY_CUE; 
+                    priorityFgColor = Color.BLACK; // Black text on bright yellow cue
+                    priorityLabelText = "MEDIUM";
+                    break;
+                case 1:
+                default: 
+                    priorityCueColor = LOW_PRIORITY_CUE; 
+                    priorityFgColor = Color.WHITE; // White text on dark green cue
+                    priorityLabelText = "LOW";
+                    break;
+            }
+            
+            JLabel priorityLabel = new JLabel(priorityLabelText);
+            priorityLabel.setFont(LIST_FONT.deriveFont(Font.BOLD));
+            priorityLabel.setOpaque(true);
+            priorityLabel.setBackground(priorityCueColor);
+            priorityLabel.setForeground(priorityFgColor);
+            
+            // Add padding/border to the priority label for the "box" effect
+            priorityLabel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(priorityCueColor.darker(), 1),
+                BorderFactory.createEmptyBorder(2, 6, 2, 6)
+            ));
+
+            // --- 4. Create Main Task Details Label ---
+            
+            String dateString = task.getCompletionDate().toString();
+            String taskDescription = task.getValue();
+            
+            String taskText = String.format("%s | %s", dateString, taskDescription);
+
+            JLabel taskDetailsLabel = new JLabel(taskText);
+            taskDetailsLabel.setFont(LIST_FONT);
+            taskDetailsLabel.setForeground(mainFgColor);
+            taskDetailsLabel.setBackground(bgColor);
+            taskDetailsLabel.setOpaque(true); 
+
+            // Handle completion (Strikethrough and Gray text)
+            if (task.isCompleted()) {
+                // Use HTML for strikethrough effect
+                taskDetailsLabel.setText(String.format("<html><strike>%s</strike></html>", taskText));
+                taskDetailsLabel.setForeground(isSelected ? Color.LIGHT_GRAY : new Color(150, 150, 150));
+                priorityLabel.setForeground(isSelected ? Color.LIGHT_GRAY : new Color(150, 150, 150));
+            } else {
+                taskDetailsLabel.setForeground(mainFgColor);
+            }
+            
+            // --- 5. Final Assembly ---
+            
+            panel.add(priorityLabel, BorderLayout.WEST);
+            panel.add(taskDetailsLabel, BorderLayout.CENTER);
+
+            // --- 6. Handle Selection State ---
+            
+            if (isSelected) {
+                // When selected, set the entire panel background to the selection color
+                Color selectionColor = PRIMARY_COLOR.darker();
+                panel.setBackground(selectionColor);
+                taskDetailsLabel.setBackground(selectionColor);
+                
+                // Ensure text is white on the dark selection background
+                taskDetailsLabel.setForeground(Color.WHITE);
+                priorityLabel.setForeground(Color.WHITE);
+            }
+            
+            // Reset the priority label foreground for non-selected completed tasks
+            if (task.isCompleted() && !isSelected) {
+                 priorityLabel.setForeground(new Color(150, 150, 150));
+            }
+
+            return panel;
         }
 
         private Color getColorForTask(Task task) {
@@ -545,16 +761,19 @@ public class ComplexToDoListApp extends JFrame {
             long daysUntilDue = ChronoUnit.DAYS.between(LocalDate.now(), dueDate);
 
             if (task.isCompleted()) {
-                // Muted success color for completed
-                return new Color(200, 230, 200); 
+                // Completed: Muted success color 
+                return new Color(220, 240, 220); // Lighter green
             } else if (daysUntilDue < 0) {
-                // Overdue: Dark Red
-                return new Color(255, 200, 200); 
-            } else if (daysUntilDue <= 2) {
-                // Critical/Soon-Due: Warning Orange/Yellow
-                return new Color(255, 255, 180); 
+                // Overdue: Clear light red/pink background (high contrast with black text)
+                return new Color(255, 180, 180); 
+            } else if (daysUntilDue <= 3) {
+                // Nearest Due (0 to 3 days away): Warning Orange/Yellow Background (high contrast with black text)
+                return new Color(255, 245, 200); 
+            } else if (daysUntilDue <= 10) { 
+                // Medium Urgency (4 to 10 days away): Soft Light Grey
+                return new Color(230, 230, 230);
             } else {
-                // Safe: Light Blue/Grey background for standard tasks
+                // Far Away Due (11+ days away): Standard White/Safe
                 return Color.WHITE; 
             }
         }
